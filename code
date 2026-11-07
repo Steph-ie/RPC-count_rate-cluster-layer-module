@@ -1,0 +1,84 @@
+import re
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import matplotlib.backends.backend_pdf as pdf_backend
+
+# ==================== 1. 指定你的数据文件名 ====================
+file_path = '#name of your file'
+
+# 嵌套字典：data_tree[cluster][layer] = [(module_id, total_rate), ...]
+data_tree = defaultdict(lambda: defaultdict(list))
+
+def parse_rpc_id(rpc_str):
+    """
+    解析 5 位真正的 RPC 编号：
+    前两位为 Cluster，第 3 位为 Layer，后两位为 Module
+    """
+    if len(rpc_str) == 5:
+        cluster = rpc_str[:2]
+        layer = rpc_str[2]
+        module = rpc_str[3:]
+        return cluster, layer, module
+    return None, None, None
+
+# ==================== 2. Analyze file ====================
+with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+    for line in f:
+        # 匹配文本格式：RPC编号为 电子学编号_RPC编号 _Pad计数率: ... 模块总计数率：总计数率数值
+        # 例如：RPC编号为19012_19100_Pad计数率: ... 模块总计数率：3261
+        m = re.search(r'RPClabel is\d+_(\d+)_Pad count rate:(.*?)模块总计数率：(\d+)', line.strip())
+        if m:
+            rpc_id, pads, total_rate = m.groups()
+            rate_val = int(total_rate)
+            
+            # 解析真正的 RPC 编号（忽略前面的电子学编号，只用下划线后面的 rpc_id）
+            cluster, layer, module = parse_rpc_id(rpc_id)
+            
+            if cluster and layer:
+                # 将该 Module 及其总计数率存入对应的 Cluster 和 Layer 归类下
+                data_tree[cluster][layer].append((module, rate_val))
+
+print("数据解析完成！正在生成整合版 PDF 文件...")
+
+# ==================== 3. 循环遍历并写入同一个 PDF ====================
+output_pdf_path = "all_cluster_layer_total_rates.pdf"
+
+with pdf_backend.PdfPages(output_pdf_path) as pdf:
+    # 按照 Cluster 和 Layer 顺序排序后依次画图
+    for cluster_id in sorted(data_tree.keys()):
+        for layer_id in sorted(data_tree[cluster_id].keys()):
+            modules_rates = data_tree[cluster_id][layer_id]
+            
+            # 按照 Module 编号排序（确保横坐标从 00, 01, 02... 连续排列）
+            modules_rates.sort(key=lambda x: x[0])
+            
+            modules = [item[0] for item in modules_rates]
+            rates = [item[1] for item in modules_rates]
+            
+            # 创建画布
+            plt.figure(figsize=(10, 5), dpi=300)
+            
+            # 绘制折线图：X轴为 Module，Y轴为该 Module 的总计数率
+            plt.plot(modules, rates, marker='o', color='royalblue', linewidth=2, markersize=6)
+            
+            # 严格按照你要求的标题格式：Cluster- Layer- Module Total Count Rate
+            title_str = f"Cluster {cluster_id} - Layer {layer_id} - Total Count Rate"
+            plt.title(title_str, fontsize=14, fontweight='bold')
+            
+            plt.xlabel("Module ID", fontsize=12)
+            plt.ylabel("Total Count Rate", fontsize=12)
+            
+            # 在每个数据点上方标出具体的数值，方便直接观察
+            for x, y in zip(modules, rates):
+                plt.text(x, y + (max(rates) - min(rates) if max(rates) != min(rates) else 1) * 0.03, 
+                         f"{y}", ha='center', va='bottom', fontsize=9)
+                
+            plt.grid(True, linestyle='--', alpha=0.6)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            
+            # 将当前页面的图表保存追加到同一个 PDF 中
+            pdf.savefig()
+            plt.close()
+
+print(f"所有图表已成功生成并合并保存至单一个 PDF 文件中：{output_pdf_path}")
